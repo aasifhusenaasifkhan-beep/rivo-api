@@ -1,0 +1,9 @@
+{
+  "name": "rivo-api",
+  "main": "worker.js",
+  "compatibility_date": "2024-11-01",
+  "d1_databases": [
+    { "binding": "DB", "database_name": "rivo", "database_id": "PASTE_DATABASE_ID_HERE" }
+  ],
+  "vars": { "SITE": "https://rivoanime.pages.dev" }
+}
