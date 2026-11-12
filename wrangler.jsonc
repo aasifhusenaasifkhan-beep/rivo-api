@@ -3,7 +3,7 @@
   "main": "worker.js",
   "compatibility_date": "2024-11-01",
   "d1_databases": [
-    { "binding": "DB", "database_name": "rivo", "database_id": "PASTE_DATABASE_ID_HERE" }
+    { "binding": "DB", "database_name": "rivo", "database_id": "3d140660-0c8e-4e40-bad5-bd55e520151b" }
   ],
   "vars": { "SITE": "https://rivoanime.pages.dev" }
 }
