@@ -2,13 +2,17 @@
 const J=(d,s=200)=>new Response(JSON.stringify(d),{status:s,headers:{'content-type':'application/json','access-control-allow-origin':'*','access-control-allow-headers':'*'}});
 const sha=async s=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)))].map(x=>x.toString(16).padStart(2,'0')).join('');
 // Universal shortener: GPLinks, ShrtFly, Droplink etc. (standard /api?api=KEY&url= style). Home URL kuch bhi paste karo (dashboard link bhi chalega)
+function pick(x,d,n=0){if(!x||typeof x!='object'||n>3)return;
+ for(const[k,v]of Object.entries(x))if(typeof v=='string'&&/^https?:\/\//.test(v)&&/short/i.test(k))return v;
+ for(const v of Object.values(x))if(v&&typeof v=='object'){const r=pick(v,d,n+1);if(r)return r}
+ for(const[k,v]of Object.entries(x))if(typeof v=='string'&&/^https?:\/\//.test(v)&&!/orig|long|dest/i.test(k)&&v!==d)return v}
 async function shorten(home,key,dest){
  const u=new URL(/^https?:\/\//.test(home)?home:'https://'+home),o=u.origin,p=u.pathname.replace(/\/$/,'');
  const c=[...new Set([p.endsWith('/api')?o+p:o+'/api','https://api.'+u.hostname.replace(/^www\./,'')+'/api'])],log=[];
  for(const b of c)for(const f of ['&format=json','']){const h=new URL(b).host;
   try{const r=await fetch(`${b}?api=${encodeURIComponent(key)}&url=${encodeURIComponent(dest)}${f}`,{headers:{'user-agent':'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36',accept:'application/json,text/plain,*/*'},signal:AbortSignal.timeout(6000)});
    const t=(await r.text()).trim();let x={};try{x=JSON.parse(t)}catch{if(/^https?:\/\/\S+$/.test(t))x={shortenedUrl:t}}
-   const s=x.shortenedUrl||x.shortened_url||x.short_url||x.shorturl||x.result_url||x.short;
+   const s=pick(x,dest);
    if(s)return s;log.push(h+' ['+r.status+'] '+(x.message||(x.error&&String(x.error))||(t[0]=='<'?'web page mila (bot-check/galat link)':t.slice(0,40))))}catch(e){log.push(h+': '+String(e.message||e))}}
  throw new Error([...new Set(log)].join(' | '))}
 export default{async fetch(r,env){
