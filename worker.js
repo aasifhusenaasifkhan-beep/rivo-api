@@ -1,6 +1,17 @@
 // Secrets/vars: ADMIN_KEY (secret), SITE (https://yoursite.pages.dev). D1 binding: DB
 const J=(d,s=200)=>new Response(JSON.stringify(d),{status:s,headers:{'content-type':'application/json','access-control-allow-origin':'*','access-control-allow-headers':'*'}});
 const sha=async s=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)))].map(x=>x.toString(16).padStart(2,'0')).join('');
+// Universal shortener: GPLinks, ShrtFly, Droplink etc. (standard /api?api=KEY&url= style). Home URL kuch bhi paste karo (dashboard link bhi chalega)
+async function shorten(home,key,dest){
+ const u=new URL(/^https?:\/\//.test(home)?home:'https://'+home),o=u.origin,p=u.pathname.replace(/\/$/,'');
+ const c=[...new Set([p.endsWith('/api')?o+p:o+'/api','https://api.'+u.hostname.replace(/^www\./,'')+'/api'])];
+ let err='';
+ for(const b of c)for(const f of ['&format=json','']){
+  try{const r=await fetch(`${b}?api=${encodeURIComponent(key)}&url=${encodeURIComponent(dest)}${f}`,{headers:{'user-agent':'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36',accept:'application/json,text/plain,*/*'},signal:AbortSignal.timeout(6000)});
+   const t=(await r.text()).trim();let x={};try{x=JSON.parse(t)}catch{if(/^https?:\/\/\S+$/.test(t))x={shortenedUrl:t}}
+   const s=x.shortenedUrl||x.shortened_url||x.short_url||x.shorturl||x.result_url||x.short;
+   if(s)return s;err=x.message||(x.error&&String(x.error))||(t[0]=='<'?'JSON ki jagah web page mila (galat link ya bot-check)':t.slice(0,50))}catch(e){err=String(e.message||e)}}
+ throw new Error(err||'koi jawab nahi')}
 export default{async fetch(r,env){
 if(r.method==='OPTIONS')return J({});
 const u=new URL(r.url),p=u.pathname,db=env.DB,q=u.searchParams;
@@ -42,9 +53,8 @@ if(p==='/api/dl/start'){
  const s=await R('select * from shorteners where id=?',b.sid).first();
  if(!s)return J({error:'Shortener nahi mila'},404);
  const f=crypto.randomUUID();await R('insert into flows(f,ep,ts) values(?,?,?)',f,b.ep,Date.now()).run();
- const x=await(await fetch(`${s.home.replace(/\/$/,'')}/api?api=${s.api}&url=${encodeURIComponent(env.SITE+'/?f='+f)}`)).json();
- if(!x.shortenedUrl)return J({error:'Shortener error'},502);
- return J({url:x.shortenedUrl})}
+ let url;try{url=await shorten(s.home,s.api,env.SITE+'/?f='+f)}catch(e){return J({error:'Shortener se link nahi bana ('+String(e.message).slice(0,90)+'). Home URL aur API key check karo.'},502)}
+ return J({url})}
 if(p==='/api/dl/verify'){
  const f=await R('select * from flows where f=? and used=0',b.f).first();
  if(!f||Date.now()-f.ts<15000)return J({error:'Aapne bypass kiya hai, dubara kijiye solve.'},403);
