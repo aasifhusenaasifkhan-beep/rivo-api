@@ -4,14 +4,13 @@ const sha=async s=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new T
 // Universal shortener: GPLinks, ShrtFly, Droplink etc. (standard /api?api=KEY&url= style). Home URL kuch bhi paste karo (dashboard link bhi chalega)
 async function shorten(home,key,dest){
  const u=new URL(/^https?:\/\//.test(home)?home:'https://'+home),o=u.origin,p=u.pathname.replace(/\/$/,'');
- const c=[...new Set([p.endsWith('/api')?o+p:o+'/api','https://api.'+u.hostname.replace(/^www\./,'')+'/api'])];
- let err='';
- for(const b of c)for(const f of ['&format=json','']){
+ const c=[...new Set([p.endsWith('/api')?o+p:o+'/api','https://api.'+u.hostname.replace(/^www\./,'')+'/api'])],log=[];
+ for(const b of c)for(const f of ['&format=json','']){const h=new URL(b).host;
   try{const r=await fetch(`${b}?api=${encodeURIComponent(key)}&url=${encodeURIComponent(dest)}${f}`,{headers:{'user-agent':'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36',accept:'application/json,text/plain,*/*'},signal:AbortSignal.timeout(6000)});
    const t=(await r.text()).trim();let x={};try{x=JSON.parse(t)}catch{if(/^https?:\/\/\S+$/.test(t))x={shortenedUrl:t}}
    const s=x.shortenedUrl||x.shortened_url||x.short_url||x.shorturl||x.result_url||x.short;
-   if(s)return s;err=x.message||(x.error&&String(x.error))||(t[0]=='<'?'JSON ki jagah web page mila (galat link ya bot-check)':t.slice(0,50))}catch(e){err=String(e.message||e)}}
- throw new Error(err||'koi jawab nahi')}
+   if(s)return s;log.push(h+' ['+r.status+'] '+(x.message||(x.error&&String(x.error))||(t[0]=='<'?'web page mila (bot-check/galat link)':t.slice(0,40))))}catch(e){log.push(h+': '+String(e.message||e))}}
+ throw new Error([...new Set(log)].join(' | '))}
 export default{async fetch(r,env){
 if(r.method==='OPTIONS')return J({});
 const u=new URL(r.url),p=u.pathname,db=env.DB,q=u.searchParams;
@@ -53,7 +52,7 @@ if(p==='/api/dl/start'){
  const s=await R('select * from shorteners where id=?',b.sid).first();
  if(!s)return J({error:'Shortener nahi mila'},404);
  const f=crypto.randomUUID();await R('insert into flows(f,ep,ts) values(?,?,?)',f,b.ep,Date.now()).run();
- let url;try{url=await shorten(s.home,s.api,env.SITE+'/?f='+f)}catch(e){return J({error:'Shortener se link nahi bana ('+String(e.message).slice(0,90)+'). Home URL aur API key check karo.'},502)}
+ let url;try{url=await shorten(s.home,s.api,env.SITE+'/?f='+f)}catch(e){return J({error:'Shortener se link nahi bana ('+String(e.message).slice(0,220)+'). Home URL aur API key check karo.'},502)}
  return J({url})}
 if(p==='/api/dl/verify'){
  const f=await R('select * from flows where f=? and used=0',b.f).first();
@@ -77,6 +76,7 @@ if(p.startsWith('/api/admin/')){
  else if(a==='setImage')await R('update posts set image=? where id=?',b.image,b.id).run();
  else if(a==='setPopup')await R("insert or replace into settings(k,v) values('popup',?)",b.script).run();
  else if(a==='delPopup')await R("delete from settings where k='popup'").run();
+ else if(a==='testShortener'){const s=await R('select * from shorteners where id=?',b.id).first();if(!s)return J({error:'Shortener nahi mila'},404);try{return J({url:await shorten(s.home,s.api,env.SITE+'/?test=1')})}catch(e){return J({error:String(e.message).slice(0,300)},400)}}
  else if(a==='list'){const t={posts:'select id,name,category,image from posts order by id desc',episodes:'select id,post_id,season,ep,quality from episodes where post_id=? order by season,cast(ep as int)',shorteners:'select id,home from shorteners',users:'select email from users',popup:"select v as script from settings where k='popup'"}[b.t]||'select 1';return J((await(t.includes('?')?R(t,b.post_id):R(t)).all()).results)}
  return J({ok:1})}
 }catch(e){return J({error:String(e.message||e)},500)}
