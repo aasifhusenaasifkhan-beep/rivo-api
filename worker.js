@@ -53,7 +53,7 @@ if(p==='/api/dl/verify'){
 if(p==='/api/ids')return J((await R('select id,name from posts order by id desc').all()).results);
 if(p.startsWith('/api/admin/')){
  if(r.headers.get('x-admin')!==env.ADMIN_KEY)return J({error:'Unauthorized'},401);
- const a=p.split('/')[3],g=s=>String(s||'').toLowerCase().replace(/#/g,' ').split(/[\s,]+/).filter(Boolean).join(' ');
+ const a=p.split('/')[3],g=s=>{s=String(s||'').toLowerCase();return(/[#,]/.test(s)?s.split(/[#,]/):s.split(/\s+/)).map(x=>x.trim().replace(/\s+/g,'-')).filter(Boolean).join(' ')};
  if(a==='addPost')await R('insert into posts(name,image,category,genres,year,synopsis) values(?,?,?,?,?,?)',b.name,b.image,b.category,g(b.genres),b.year,b.synopsis).run();
  else if(a==='addEpisode'){const k=String(b.post||'').trim(),po=/^\d+$/.test(k)?await R('select id from posts where id=?',k).first():await R('select id from posts where name like ? order by id desc',`%${k}%`).first();
   if(!po)return J({error:'Post nahi mila'},404);
@@ -67,7 +67,7 @@ if(p.startsWith('/api/admin/')){
  else if(a==='setImage')await R('update posts set image=? where id=?',b.image,b.id).run();
  else if(a==='setPopup')await R("insert or replace into settings(k,v) values('popup',?)",b.script).run();
  else if(a==='delPopup')await R("delete from settings where k='popup'").run();
- else if(a==='list'){const t={posts:'select id,name,category from posts',episodes:'select id,post_id,season,ep,quality from episodes',shorteners:'select id,home from shorteners',users:'select email from users'}[b.t]||'select 1';return J((await R(t).all()).results)}
+ else if(a==='list'){const t={posts:'select id,name,category,image from posts order by id desc',episodes:'select id,post_id,season,ep,quality from episodes where post_id=? order by season,cast(ep as int)',shorteners:'select id,home from shorteners',users:'select email from users',popup:"select v as script from settings where k='popup'"}[b.t]||'select 1';return J((await(t.includes('?')?R(t,b.post_id):R(t)).all()).results)}
  return J({ok:1})}
 }catch(e){return J({error:String(e.message||e)},500)}
 return J({error:'not found'},404)}}
