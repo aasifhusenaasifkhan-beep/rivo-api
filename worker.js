@@ -15,7 +15,7 @@ async function shorten(home,key,dest){
    const s=pick(x,dest);
    if(s)return s;log.push(h+' ['+r.status+'] '+(x.message||(x.error&&String(x.error))||(t[0]=='<'?'web page mila (bot-check/galat link)':t.slice(0,40))))}catch(e){log.push(h+': '+String(e.message||e))}}
  throw new Error([...new Set(log)].join(' | '))}
-export default{async fetch(r,env){
+const H={async fetch(r,env){
 if(r.method==='OPTIONS')return J({});
 const u=new URL(r.url),p=u.pathname,db=env.DB,q=u.searchParams;
 const b=r.method==='POST'?await r.json().catch(()=>({})):{};
@@ -25,7 +25,7 @@ try{
 if(p==='/api/posts'){
  const pg=Math.max(1,+q.get('page')||1),w=[],a=[];
  if(q.get('cat')){w.push('category=? collate nocase');a.push(q.get('cat'))}
- if(q.get('genre')){w.push("(' '||genres||' ') like ?");a.push('% '+q.get('genre').toLowerCase()+' %')}
+ for(const gn of(q.get('genre')||'').split(',').filter(Boolean)){w.push("(' '||genres||' ') like ?");a.push('% '+gn.toLowerCase()+' %')}
  if(q.get('q')){w.push('name like ?');a.push('%'+q.get('q')+'%')}
  const az=q.get('az');
  if(az){if(az==='0-9')w.push("substr(name,1,1) between '0' and '9'");else{w.push('upper(substr(name,1,1))=?');a.push(az.toUpperCase())}}
@@ -35,10 +35,11 @@ if(p==='/api/posts'){
  return J({posts:results,pages:Math.ceil(t.c/6)})}
 if(p==='/api/meta'){
  const{results}=await R('select category,genres from posts').all(),c=new Map,g=new Set;
- results.forEach(x=>{const k=(x.category||'').trim();if(k&&!c.has(k.toLowerCase()))c.set(k.toLowerCase(),k);(x.genres||'').split(' ').filter(Boolean).forEach(y=>g.add(y))});
+ const cg={};results.forEach(x=>{const k=(x.category||'').trim();if(k&&!c.has(k.toLowerCase()))c.set(k.toLowerCase(),k);const n=c.get(k.toLowerCase());(x.genres||'').split(' ').filter(Boolean).forEach(y=>{g.add(y);if(n)(cg[n]??=new Set).add(y)})});
  const s=await R("select v from settings where k='popup'").first();
  const sh=(await R('select id,home from shorteners').all()).results.map(x=>({id:x.id,n:new URL(x.home).hostname}));
- return J({cats:[...c.values()],genres:[...g].sort(),popup:s?.v||'',shorts:sh})}
+ let L={};try{L=JSON.parse((await R("select v from settings where k='links'").first())?.v||'{}')}catch{}
+ return J({cats:[...c.values()],genres:[...g].sort(),popup:s?.v||'',shorts:sh,links:L,cg:Object.fromEntries(Object.entries(cg).map(([k,v])=>[k,[...v].sort()]))})}
 if(p.startsWith('/api/post/')){
  const id=p.split('/')[3],po=await R('select * from posts where id=?',id).first();
  const{results}=await R('select id,season,ep,quality,play_link from episodes where post_id=? order by season,cast(ep as int)',id).all();
@@ -81,7 +82,15 @@ if(p.startsWith('/api/admin/')){
  else if(a==='setPopup')await R("insert or replace into settings(k,v) values('popup',?)",b.script).run();
  else if(a==='delPopup')await R("delete from settings where k='popup'").run();
  else if(a==='testShortener'){const s=await R('select * from shorteners where id=?',b.id).first();if(!s)return J({error:'Shortener nahi mila'},404);try{return J({url:await shorten(s.home,s.api,env.SITE+'/?test=1')})}catch(e){return J({error:String(e.message).slice(0,300)},400)}}
- else if(a==='list'){const t={posts:'select id,name,category,image from posts order by id desc',episodes:'select id,post_id,season,ep,quality from episodes where post_id=? order by season,cast(ep as int)',shorteners:'select id,home from shorteners',users:'select email from users',popup:"select v as script from settings where k='popup'"}[b.t]||'select 1';return J((await(t.includes('?')?R(t,b.post_id):R(t)).all()).results)}
+ else if(a==='setLinks')await R("insert or replace into settings(k,v) values('links',?)",JSON.stringify({c:String(b.channel||'').trim(),g:String(b.group||'').trim()})).run();
+ else if(a==='list'){const t={posts:'select id,name,category,image from posts order by id desc',episodes:'select id,post_id,season,ep,quality from episodes where post_id=? order by season,cast(ep as int)',shorteners:'select id,home from shorteners',users:'select email from users',popup:"select v as script from settings where k='popup'",links:"select v as script from settings where k='links'"}[b.t]||'select 1';return J((await(t.includes('?')?R(t,b.post_id):R(t)).all()).results)}
  return J({ok:1})}
 }catch(e){return J({error:String(e.message||e)},500)}
 return J({error:'not found'},404)}}
+
+// 60 sec memory cache for public GET pages (D1 reads bachane ke liye)
+const MC=new Map();
+export default{async fetch(r,env){const u=new URL(r.url);
+ if(r.method==='GET'&&/^\/api\/(meta|posts|post\/)/.test(u.pathname)){const h=MC.get(r.url);if(h&&Date.now()-h.t<60000)return new Response(h.b,{headers:h.h});
+  const res=await H.fetch(r,env);if(!res.ok)return res;const b=await res.text(),hh=Object.fromEntries(res.headers);MC.set(r.url,{t:Date.now(),b,h:hh});if(MC.size>200)MC.delete(MC.keys().next().value);return new Response(b,{headers:hh})}
+ return H.fetch(r,env)}};
