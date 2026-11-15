@@ -6,6 +6,7 @@ function pick(x,d,n=0){if(!x||typeof x!='object'||n>3)return;
  for(const[k,v]of Object.entries(x))if(typeof v=='string'&&/^https?:\/\//.test(v)&&/short/i.test(k))return v;
  for(const v of Object.values(x))if(v&&typeof v=='object'){const r=pick(v,d,n+1);if(r)return r}
  for(const[k,v]of Object.entries(x))if(typeof v=='string'&&/^https?:\/\//.test(v)&&!/orig|long|dest/i.test(k)&&v!==d)return v}
+const sp=s=>String(s||'').replace(/\s+/g,' ').trim(),ss=s=>{const n=parseInt(String(s||'').replace(/\D/g,''));return String(n>0?n:1).padStart(2,'0')},okU=s=>/^https?:\/\/\S{3,}/.test(String(s||'').trim())?String(s).trim():'';
 async function shorten(home,key,dest){
  const u=new URL(/^https?:\/\//.test(home)?home:'https://'+home),o=u.origin,p=u.pathname.replace(/\/$/,'');
  const c=[...new Set([p.endsWith('/api')?o+p:o+'/api','https://api.'+u.hostname.replace(/^www\./,'')+'/api'])],log=[];
@@ -30,7 +31,7 @@ if(p==='/api/posts'){
  const az=q.get('az');
  if(az){if(az==='0-9')w.push("substr(name,1,1) between '0' and '9'");else{w.push('upper(substr(name,1,1))=?');a.push(az.toUpperCase())}}
  const W=w.length?'where '+w.join(' and '):'';
- const{results}=await R(`select id,name,image,category from posts ${W} order by id desc limit 6 offset ?`,...a,(pg-1)*6).all();
+ const{results}=await R(`select id,name,image,category from posts ${W} order by updated desc,id desc limit 6 offset ?`,...a,(pg-1)*6).all();
  const t=await R(`select count(*) c from posts ${W}`,...a).first();
  return J({posts:results,pages:Math.ceil(t.c/6)})}
 if(p==='/api/meta'){
@@ -69,9 +70,20 @@ if(p.startsWith('/api/admin/')){
  if(r.headers.get('x-admin')!==env.ADMIN_KEY)return J({error:'Unauthorized'},401);
  const a=p.split('/')[3],g=s=>{s=String(s||'').toLowerCase();return(/[#,]/.test(s)?s.split(/[#,]/):s.split(/\s+/)).map(x=>x.trim().replace(/\s+/g,'-')).filter(Boolean).join(' ')};
  if(a==='addPost')await R('insert into posts(name,image,category,genres,year,synopsis) values(?,?,?,?,?,?)',b.name,b.image,b.category,g(b.genres),b.year,b.synopsis).run();
+ else if(a==='bulkPosts'){const it=(Array.isArray(b.items)?b.items:[]).slice(0,50).map(x=>({name:sp(x.name),category:sp(x.category),genres:g(x.genres),year:sp(x.year),synopsis:String(x.synopsis||'').trim(),image:okU(x.image)})).filter(x=>x.name&&x.category);
+  const lw=it.map(x=>x.name.toLowerCase()),ex=new Set(lw.length?(await R(`select lower(name) n from posts where lower(name) in (${lw.map(()=>'?').join(',')})`,...lw).all()).results.map(x=>x.n):[]),seen=new Set,ins=[],sk=[];
+  for(const x of it){const k=x.name.toLowerCase();if(ex.has(k)||seen.has(k)){sk.push(x.name);continue}seen.add(k);ins.push(R('insert into posts(name,image,category,genres,year,synopsis,updated) values(?,?,?,?,?,?,0)',x.name,x.image,x.category,x.genres,x.year,x.synopsis))}
+  if(ins.length)await db.batch(ins);return J({added:ins.length,skipped:sk})}
+ else if(a==='bulkEpisodes'){const it=(Array.isArray(b.items)?b.items:[]).slice(0,50).map(x=>({name:sp(x.name).toLowerCase(),season:ss(x.season),ep:sp(x.ep),quality:(sp(x.quality)||'HD').toUpperCase(),dl:okU(x.dl_link),pl:okU(x.play_link)})).filter(x=>x.name&&x.ep&&x.dl);
+  const names=[...new Set(it.map(x=>x.name))],map={},nf=[];
+  if(names.length)(await R(`select id,lower(name) n from posts where lower(name) in (${names.map(()=>'?').join(',')})`,...names).all()).results.forEach(r=>map[r.n]=r.id);
+  for(const n of names)if(!map[n]){const r=(await R('select id from posts where lower(name) like ? limit 2','%'+n+'%').all()).results;if(r.length==1)map[n]=r[0].id;else nf.push(n)}
+  const ids=[...new Set(Object.values(map))],have=new Set(ids.length?(await R(`select post_id,season,ep,quality from episodes where post_id in (${ids.map(()=>'?').join(',')})`,...ids).all()).results.map(r=>[r.post_id,r.season,r.ep,r.quality].join('|')):[]),ins=[];let dup=0;
+  for(const x of it){const id=map[x.name];if(!id)continue;const k=[id,x.season,x.ep,x.quality].join('|');if(have.has(k)){dup++;continue}have.add(k);ins.push(R('insert into episodes(post_id,season,ep,dl_link,play_link,quality) values(?,?,?,?,?,?)',id,x.season,x.ep,x.dl,x.pl,x.quality))}
+  if(ins.length)await db.batch(ins);return J({added:ins.length,dup,nf})}
  else if(a==='addEpisode'){const k=String(b.post||'').trim(),po=/^\d+$/.test(k)?await R('select id from posts where id=?',k).first():await R('select id from posts where name like ? order by id desc',`%${k}%`).first();
   if(!po)return J({error:'Post nahi mila'},404);
-  await R('insert into episodes(post_id,season,ep,dl_link,play_link,quality) values(?,?,?,?,?,?)',po.id,b.season,b.ep,b.dl_link,b.play_link,(b.quality||'HD').toUpperCase()).run()}
+  await R('insert into episodes(post_id,season,ep,dl_link,play_link,quality) values(?,?,?,?,?,?)',po.id,ss(b.season),b.ep,b.dl_link,b.play_link,(b.quality||'HD').toUpperCase()).run();await R('update posts set updated=? where id=?',Date.now(),po.id).run()}
  else if(a==='delPost'){await R('delete from episodes where post_id=?',b.id).run();await R('delete from posts where id=?',b.id).run()}
  else if(a==='delEpisode')await R('delete from episodes where id=?',b.id).run();
  else if(a==='addShortener'){if((await R('select count(*) c from shorteners').first()).c>=3)return J({error:'Max 3 shortener'},400);await R('insert into shorteners(home,api) values(?,?)',b.home,b.api).run()}
