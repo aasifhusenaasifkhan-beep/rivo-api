@@ -2,13 +2,16 @@
 const J=(d,s=200)=>new Response(JSON.stringify(d),{status:s,headers:{'content-type':'application/json','access-control-allow-origin':'*','access-control-allow-headers':'*'}});
 const sha=async s=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)))].map(x=>x.toString(16).padStart(2,'0')).join('');
 // Site password gate (admin panel se add/delete). Koi password nahi = gate band.
-const hm=async(k,s)=>{const kk=await crypto.subtle.importKey('raw',new TextEncoder().encode(k),{name:'HMAC',hash:'SHA-256'},false,['sign']);return [...new Uint8Array(await crypto.subtle.sign('HMAC',kk,new TextEncoder().encode(s)))].map(x=>x.toString(16).padStart(2,'0')).join('')};
+// Password har Download/Play par poochha jata hai (session/token yaad nahi rakha jata).
 let GC={t:0,v:[]};const FL=new Map;
 const GL=async(env,f)=>{if(!f&&Date.now()-GC.t<30000)return GC.v;let v=[];try{v=JSON.parse((await env.DB.prepare("select v from settings where k='gate'").first())?.v||'[]')}catch{}GC={t:Date.now(),v};return v};
 const VL=async env=>{try{return JSON.parse((await env.DB.prepare("select v from settings where k='vtargets'").first())?.v||'[]')}catch{return[]}};
 const GW=async(env,L)=>{await env.DB.prepare("insert or replace into settings(k,v) values('gate',?)").bind(JSON.stringify(L)).run();GC={t:0,v:[]}};
-const mk=async(env,pw)=>{const e=Date.now()+30*864e5,h=await sha(pw);return e+'.'+h+'.'+await hm(env.ADMIN_KEY,e+'.'+h)};
-const GO=async(r,env)=>{const L=await GL(env);if(!L.length)return 1;const t=(r.headers.get('authorization')||'').slice(7).split('.');if(t.length!=3||+t[0]<Date.now())return 0;if(await hm(env.ADMIN_KEY,t[0]+'.'+t[1])!==t[2])return 0;for(const p of L)if(await sha(p)===t[1])return 1;return 0};
+const PC=async(r,env,b)=>{const L=await GL(env);if(!L.length)return 0;const x=String(b.pass||'').trim();if(!x)return J({error:'Password dalo',locked:1},401);
+ const ip=r.headers.get('cf-connecting-ip')||'x',f=FL.get(ip)||{n:0,t:Date.now()};
+ if(Date.now()-f.t>6e5){f.n=0;f.t=Date.now()}
+ if(f.n>=8)return J({error:'Bahut zyada galat try. 10 min baad try karo.'},429);
+ if(!L.includes(x)){f.n++;FL.set(ip,f);if(FL.size>500)FL.delete(FL.keys().next().value);return J({error:'Galat password'},401)}return 0};
 const sp=s=>String(s||'').replace(/\s+/g,' ').trim(),ss=s=>{const n=parseInt(String(s||'').replace(/\D/g,''));return String(n>0?n:1).padStart(2,'0')},okU=s=>/^https?:\/\/\S{3,}/.test(String(s||'').trim())?String(s).trim():'';
 const H={async fetch(r,env){
 if(r.method==='OPTIONS')return J({});
@@ -16,7 +19,7 @@ const u=new URL(r.url),p=u.pathname,db=env.DB,q=u.searchParams;
 const b=r.method==='POST'?await r.json().catch(()=>({})):{};
 const R=(s,...v)=>db.prepare(s).bind(...v);
 try{
-if(/^\/api\/dl/.test(p)&&!await GO(r,env))return J({error:'Password dalo',locked:1},401);
+if(p==='/api/dl'||p==='/api/dl/start'){const x=await PC(r,env,b);if(x)return x}
 if(p==='/api/posts'){
  const pg=Math.max(1,+q.get('page')||1),w=[],a=[];
  if(q.get('cat')){w.push('category=? collate nocase');a.push(q.get('cat'))}
@@ -39,12 +42,11 @@ if(p.startsWith('/api/post/')){
  const id=p.split('/')[3],po=await R('select * from posts where id=?',id).first();
  const{results}=await R('select id,season,ep,quality,(length(coalesce(play_link,0))>1) hp from episodes where post_id=? order by season,cast(ep as int)',id).all();
  return J({post:po,eps:results})}
-if(p==='/api/gate'){
- const ip=r.headers.get('cf-connecting-ip')||'x',f=FL.get(ip)||{n:0,t:Date.now()},x=String(b.pass||'').trim();
- if(Date.now()-f.t>6e5){f.n=0;f.t=Date.now()}
- if(f.n>=8)return J({error:'Bahut zyada galat try. 10 min baad try karo.'},429);
- if(!x||!(await GL(env)).includes(x)){f.n++;FL.set(ip,f);if(FL.size>500)FL.delete(FL.keys().next().value);return J({error:'Galat password'},401)}
- return J({token:await mk(env,x)})}
+if(p==='/api/vpn'){
+ const c=r.cf||{},q=new URL(r.url).searchParams.get('o'),o=q===null?NaN:+q,org=String(c.asOrganization||'');let tz=0;
+ try{const n=new Date();tz=Math.round((new Date(n.toLocaleString('en-US',{timeZone:c.timezone||'UTC'}))-new Date(n.toLocaleString('en-US',{timeZone:'UTC'})))/6e4)}catch{}
+ const bad=/vpn|proxy|hosting|data ?cent|m247|datacamp|choopa|vultr|digitalocean|linode|ovh|hetzner|leaseweb|amazon|google cloud|microsoft|azure|cloudflare|nord|proton|mullvad|surfshark|tunnel|colo|server/i.test(org)||(!!c.timezone&&!isNaN(o)&&Math.abs(tz-o)>=60);
+ return J({vpn:!!bad})}
 if(p==='/api/dl'){
  if((await VL(env)).length)return J({verify:1});
  const e=await R('select dl_link,play_link from episodes where id=?',b.ep).first(),l=e&&(b.k=='play'?e.play_link:e.dl_link);
